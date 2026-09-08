@@ -12,8 +12,23 @@ const PAD = 90;
 const CONTENT_W = CANVAS_W - PAD * 2;
 const BORDER_INSET = 34;
 
-/** Item text shrinks through this ladder until the list fits the slip. */
-const ITEM_SIZES = [46, 42, 38, 34, 30, 26] as const;
+const SHOP_SIZE = 80;
+const NAME_LABEL_SIZE = 40;
+const NAME_SIZE = 76;
+const SECTION_SIZE = 44;
+
+/** Serve-mode label steps down only if both labels cannot share one row. */
+const MODE_LABEL_SIZES = [54, 50, 46, 42, 38] as const;
+const MODE_BOX_RATIO = 1.08;
+const MODE_LABEL_GAP = 24;
+const MODE_COL_GAP = 40;
+
+/**
+ * Item text shrinks through this ladder until the list fits the slip. A short
+ * order gets the top of the ladder; the small end still exists so a long order
+ * degrades gracefully instead of clipping early.
+ */
+const ITEM_SIZES = [72, 64, 58, 52, 46, 42, 38, 34, 30, 26] as const;
 const ITEM_LINE_RATIO = 1.4;
 const ITEM_GAP_RATIO = 0.45;
 const QTY_GUTTER = 40;
@@ -72,6 +87,34 @@ function drawCheckbox(
 	ctx.fillStyle = INK;
 	ctx.font = font(checked ? 700 : 400, labelSize);
 	ctx.fillText(label, x + box + 24, y + (box - labelSize) / 2 + 2);
+}
+
+interface ModeLayout {
+	size: number;
+	box: number;
+	secondX: number;
+}
+
+/**
+ * Pick the largest label size at which both checkboxes fit on one row, and the
+ * x offset of the second one. Measured at bold, the wider of the two states, so
+ * the row cannot reflow just because the selection changed.
+ */
+function layoutModes(ctx: CanvasRenderingContext2D, width: number): ModeLayout {
+	const dine = SERVE_MODE_LABEL['dine-in'];
+	const take = SERVE_MODE_LABEL.takeaway;
+	let fallback: ModeLayout | null = null;
+
+	for (const size of MODE_LABEL_SIZES) {
+		ctx.font = font(700, size);
+		const box = Math.round(size * MODE_BOX_RATIO);
+		const firstEnd = box + MODE_LABEL_GAP + ctx.measureText(dine).width;
+		const secondX = Math.max(width / 2, firstEnd + MODE_COL_GAP);
+		const layout = { size, box, secondX };
+		fallback ??= layout;
+		if (secondX + box + MODE_LABEL_GAP + ctx.measureText(take).width <= width) return layout;
+	}
+	return fallback as ModeLayout;
 }
 
 interface ItemLayout {
@@ -252,11 +295,11 @@ export function renderBill(canvas: HTMLCanvasElement, bill: Bill): RenderResult 
 
 	if (bill.shopName !== '') {
 		ctx.fillStyle = INK;
-		ctx.font = font(700, 62);
+		ctx.font = font(700, SHOP_SIZE);
 		ctx.textAlign = 'center';
 		for (const line of wrapText(ctx, bill.shopName, CONTENT_W).slice(0, 2)) {
 			ctx.fillText(line, CANVAS_W / 2, y);
-			y += 62 * 1.24;
+			y += SHOP_SIZE * 1.24;
 		}
 		ctx.textAlign = 'left';
 		y += 24;
@@ -266,39 +309,46 @@ export function renderBill(canvas: HTMLCanvasElement, bill: Bill): RenderResult 
 	}
 
 	ctx.fillStyle = MUTED;
-	ctx.font = font(400, 34);
+	ctx.font = font(400, NAME_LABEL_SIZE);
 	ctx.fillText('ชื่อ', PAD, y);
-	y += 34 * 1.35;
+	y += NAME_LABEL_SIZE * 1.35;
 
 	ctx.fillStyle = INK;
-	ctx.font = font(700, 58);
+	ctx.font = font(700, NAME_SIZE);
 	for (const line of wrapText(ctx, bill.customerName || '-', CONTENT_W).slice(0, 2)) {
 		ctx.fillText(line, PAD, y);
-		y += 58 * 1.24;
+		y += NAME_SIZE * 1.24;
 	}
 	y += 26;
 
-	const box = 46;
-	const labelSize = 42;
-	drawCheckbox(ctx, PAD, y, box, bill.mode === 'dine-in', SERVE_MODE_LABEL['dine-in'], labelSize);
+	const modes = layoutModes(ctx, CONTENT_W);
 	drawCheckbox(
 		ctx,
-		PAD + 500,
+		PAD,
 		y,
-		box,
+		modes.box,
+		bill.mode === 'dine-in',
+		SERVE_MODE_LABEL['dine-in'],
+		modes.size
+	);
+	drawCheckbox(
+		ctx,
+		PAD + modes.secondX,
+		y,
+		modes.box,
 		bill.mode === 'takeaway',
 		SERVE_MODE_LABEL.takeaway,
-		labelSize
+		modes.size
 	);
-	y += Math.max(box, labelSize) + 40;
+	y += Math.max(modes.box, modes.size) + 40;
 
 	horizontalRule(ctx, y);
 	y += 30;
 
 	ctx.fillStyle = MUTED;
-	ctx.font = font(700, 36);
+	ctx.font = font(700, SECTION_SIZE);
 	ctx.fillText('รายการ', PAD, y);
-	y += 36 * 1.5;
+	y += SECTION_SIZE * 1.5;
 
 	return drawItems(ctx, bill.items, PAD, y, CONTENT_W, CANVAS_H - PAD - y);
 }
