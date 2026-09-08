@@ -81,17 +81,26 @@ await page.getByPlaceholder('เช่น คุณสมชาย').fill('ค�
 await page.getByRole('button', { name: 'กลับบ้าน' }).click();
 
 const ORDER = [
-	['ข้าวมันไก่ต้ม', 2],
-	['ข้าวขาหมูพิเศษ', 1],
-	['ผัดกะเพราไก่ไข่ดาว', 3],
-	['ต้มยำกุ้งน้ำข้น', 1]
+	['ข้าวมันไก่ต้ม', 2, ['เพิ่มไข่ดาว', 'ไม่ใส่ผัก']],
+	['ข้าวขาหมูพิเศษ', 1, ['เผ็ดน้อย']],
+	['ผัดกะเพราไก่ไข่ดาว', 3, []],
+	['ต้มยำกุ้งน้ำข้น', 1, ['ไม่ใส่เห็ด']]
 ];
-for (const [i, [name, qty]] of ORDER.entries()) {
+for (const [i, [name, qty, additions]] of ORDER.entries()) {
 	if (i > 0) await page.getByRole('button', { name: '+ เพิ่มรายการ' }).click();
 	await page.locator('[data-item-input]').nth(i).fill(name);
 	for (let q = 1; q < qty; q++)
 		await page.getByRole('button', { name: `เพิ่มจำนวน ${name}` }).click();
+
+	const row = page.locator('li:has([data-item-input])').nth(i);
+	for (const [j, text] of additions.entries()) {
+		await row.getByRole('button', { name: '+ เพิ่มเติม' }).click();
+		await row.locator('[data-addition-input]').nth(j).fill(text);
+	}
 }
+
+const additionInputs = await page.locator('[data-addition-input]').count();
+check('additions attach per item', additionInputs === 4, `${additionInputs} addition inputs`);
 
 const modePressed = await page
 	.getByRole('button', { name: 'กลับบ้าน' })
@@ -184,6 +193,30 @@ check('no horizontal scroll at 390px', overflowX <= 0, `overflow ${overflowX}px`
 await page.screenshot({ path: `${OUT}/app-mobile.png`, fullPage: true });
 
 check('no console/page errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));
+
+// The slip must carry NO timestamp. Render an identical order under two very
+// different clocks; if a date were still drawn, the bitmaps would differ.
+async function slipUnderClock(fakeNow) {
+	const p2 = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+	await p2.addInitScript((t) => {
+		Date.now = () => t;
+	}, fakeNow);
+	await p2.goto(BASE, { waitUntil: 'networkidle' });
+	await p2.getByPlaceholder('ชื่อร้านของคุณ').fill('ร้านทดสอบเวลา');
+	await p2.getByPlaceholder('เช่น คุณสมชาย').fill('ทดสอบ');
+	await p2.locator('[data-item-input]').first().fill('ข้าวมันไก่');
+	await p2.waitForTimeout(400);
+	const png = await p2.evaluate(() => document.querySelector('canvas').toDataURL('image/png'));
+	await p2.close();
+	return png;
+}
+const clockA = await slipUnderClock(Date.UTC(2026, 0, 2, 3, 4));
+const clockB = await slipUnderClock(Date.UTC(2027, 10, 27, 16, 45));
+check(
+	'slip carries no timestamp (identical under two clocks)',
+	clockA === clockB,
+	clockA === clockB ? 'bitmaps identical' : 'bitmaps differ - a date is still drawn'
+);
 
 await browser.close();
 

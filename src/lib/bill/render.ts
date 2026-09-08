@@ -1,5 +1,5 @@
 import { CANVAS_H, CANVAS_W } from './constants';
-import { formatThaiDateTime, wrapText } from './text';
+import { wrapText } from './text';
 import { SERVE_MODE_LABEL, type Bill, type OrderItem } from './types';
 
 const FAMILY = `'Sarabun', sans-serif`;
@@ -17,6 +17,11 @@ const ITEM_SIZES = [46, 42, 38, 34, 30, 26] as const;
 const ITEM_LINE_RATIO = 1.4;
 const ITEM_GAP_RATIO = 0.45;
 const QTY_GUTTER = 40;
+
+/** Additions render smaller and indented, so an item reads as one block. */
+const ADDITION_SIZE_RATIO = 0.78;
+const ADDITION_INDENT_RATIO = 0.95;
+const ADDITION_BULLET = '- ';
 
 export interface RenderResult {
 	/** Items that did not fit even at the smallest size. Never silently dropped. */
@@ -72,7 +77,9 @@ function drawCheckbox(
 interface ItemLayout {
 	qtyText: string;
 	qtyW: number;
-	lines: string[];
+	nameLines: string[];
+	additionLines: string[];
+	height: number;
 }
 
 interface ListLayout {
@@ -80,9 +87,12 @@ interface ListLayout {
 	height: number;
 	lineH: number;
 	gap: number;
+	additionSize: number;
+	additionLineH: number;
+	indent: number;
 }
 
-/** Measure the whole list at one font size. Mutates ctx.font only. */
+/** Measure the whole list at one item font size. Mutates ctx.font only. */
 function layoutItems(
 	ctx: CanvasRenderingContext2D,
 	items: OrderItem[],
@@ -91,19 +101,43 @@ function layoutItems(
 ): ListLayout {
 	const lineH = size * ITEM_LINE_RATIO;
 	const gap = size * ITEM_GAP_RATIO;
+	const additionSize = Math.round(size * ADDITION_SIZE_RATIO);
+	const additionLineH = additionSize * ITEM_LINE_RATIO;
+	const indent = Math.round(size * ADDITION_INDENT_RATIO);
 
 	const entries = items.map((item) => {
 		const qtyText = `×${item.qty}`;
 		ctx.font = font(700, size);
 		const qtyW = ctx.measureText(qtyText).width;
+
 		ctx.font = font(400, size);
-		const lines = wrapText(ctx, item.name, width - qtyW - QTY_GUTTER);
-		return { qtyText, qtyW, lines };
+		const nameLines = wrapText(ctx, item.name, width - qtyW - QTY_GUTTER);
+
+		ctx.font = font(400, additionSize);
+		const additionLines = item.additions.flatMap((a) =>
+			wrapText(ctx, ADDITION_BULLET + a.text, width - indent)
+		);
+
+		return {
+			qtyText,
+			qtyW,
+			nameLines,
+			additionLines,
+			height: nameLines.length * lineH + additionLines.length * additionLineH
+		};
 	});
 
-	const textH = entries.reduce((h, e) => h + e.lines.length * lineH, 0);
+	const textH = entries.reduce((h, e) => h + e.height, 0);
 	const gaps = gap * Math.max(0, entries.length - 1);
-	return { entries, height: textH + gaps, lineH, gap };
+	return {
+		entries,
+		height: textH + gaps,
+		lineH,
+		gap,
+		additionSize,
+		additionLineH,
+		indent
+	};
 }
 
 function drawItems(
@@ -128,15 +162,14 @@ function drawItems(
 		}
 	}
 
-	const { lineH, gap } = layout;
+	const { lineH, gap, additionSize, additionLineH, indent } = layout;
 	const bottom = yTop + availH;
 	let y = yTop;
 	let drawn = 0;
 
 	for (const entry of layout.entries) {
-		const blockH = entry.lines.length * lineH;
-		// Draw whole items only; a half-rendered order line is worse than none.
-		if (y + blockH > bottom) break;
+		// An item and its additions are one block; never split or half-draw one.
+		if (y + entry.height > bottom) break;
 
 		ctx.fillStyle = INK;
 		ctx.font = font(700, size);
@@ -146,13 +179,13 @@ function drawItems(
 
 		ctx.font = font(400, size);
 		let lineY = y;
-		for (const line of entry.lines) {
+		for (const line of entry.nameLines) {
 			ctx.fillText(line, x, lineY);
 			lineY += lineH;
 		}
 
-		// Dot leader bridges the first line to the quantity column.
-		const firstLineW = ctx.measureText(entry.lines[0] ?? '').width;
+		// Dot leader bridges the first name line to the quantity column.
+		const firstLineW = ctx.measureText(entry.nameLines[0] ?? '').width;
 		const from = x + firstLineW + 18;
 		const to = x + width - entry.qtyW - 18;
 		if (to - from > 30) {
@@ -168,7 +201,14 @@ function drawItems(
 			ctx.restore();
 		}
 
-		y += blockH + gap;
+		ctx.fillStyle = MUTED;
+		ctx.font = font(400, additionSize);
+		for (const line of entry.additionLines) {
+			ctx.fillText(line, x + indent, lineY);
+			lineY += additionLineH;
+		}
+
+		y += entry.height + gap;
 		drawn += 1;
 	}
 
@@ -179,6 +219,8 @@ function drawItems(
  * Paint `bill` onto `canvas` at exactly CANVAS_W x CANVAS_H device pixels.
  * The on-screen preview is this same canvas scaled by CSS, so what is previewed
  * and what is exported are one bitmap and cannot drift apart.
+ *
+ * bill.createdAt is deliberately NOT drawn: the slip carries no timestamp.
  *
  * Caller must await ensureFontsReady() first.
  */
@@ -206,7 +248,7 @@ export function renderBill(canvas: HTMLCanvasElement, bill: Bill): RenderResult 
 	);
 	ctx.restore();
 
-	let y = 112;
+	let y = 118;
 
 	if (bill.shopName !== '') {
 		ctx.fillStyle = INK;
@@ -217,18 +259,11 @@ export function renderBill(canvas: HTMLCanvasElement, bill: Bill): RenderResult 
 			y += 62 * 1.24;
 		}
 		ctx.textAlign = 'left';
-		y += 14;
+		y += 24;
+
+		horizontalRule(ctx, y);
+		y += 34;
 	}
-
-	ctx.fillStyle = MUTED;
-	ctx.font = font(400, 32);
-	ctx.textAlign = 'center';
-	ctx.fillText(formatThaiDateTime(bill.createdAt), CANVAS_W / 2, y);
-	ctx.textAlign = 'left';
-	y += 32 * 1.4 + 22;
-
-	horizontalRule(ctx, y);
-	y += 34;
 
 	ctx.fillStyle = MUTED;
 	ctx.font = font(400, 34);

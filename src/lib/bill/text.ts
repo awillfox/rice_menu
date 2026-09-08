@@ -96,15 +96,3 @@ export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: 
 	flush();
 	return lines.length > 0 ? lines : [''];
 }
-
-/**
- * Thai receipt convention: Buddhist Era year (Gregorian + 543), day-first.
- * Computed directly rather than via Intl so the output cannot vary with the
- * ICU build or the machine locale.
- */
-export function formatThaiDateTime(epochMs: number): string {
-	const d = new Date(epochMs);
-	const p = (n: number) => String(n).padStart(2, '0');
-	const date = `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear() + 543}`;
-	return `${date}  ${p(d.getHours())}:${p(d.getMinutes())}`;
-}

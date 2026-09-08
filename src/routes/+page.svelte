@@ -12,12 +12,23 @@
 		saveBill,
 		saveShopName
 	} from '$lib/bill/history';
-	import { SERVE_MODE_LABEL, type Bill, type OrderItem, type ServeMode } from '$lib/bill/types';
+	import {
+		SERVE_MODE_LABEL,
+		type Addition,
+		type Bill,
+		type OrderItem,
+		type ServeMode
+	} from '$lib/bill/types';
 
 	let seq = 0;
 	function newItem(name = '', qty = 1): OrderItem {
 		seq += 1;
-		return { id: `it-${seq}-${Date.now().toString(36)}`, name, qty };
+		return { id: `it-${seq}-${Date.now().toString(36)}`, name, qty, additions: [] };
+	}
+
+	function newAddition(text = ''): Addition {
+		seq += 1;
+		return { id: `ad-${seq}-${Date.now().toString(36)}`, text };
 	}
 
 	let canvasEl = $state<HTMLCanvasElement | null>(null);
@@ -37,7 +48,15 @@
 	let statusTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const filledItems = $derived(
-		items.filter((i) => i.name.trim() !== '').map((i) => ({ ...i, name: i.name.trim() }))
+		items
+			.filter((i) => i.name.trim() !== '')
+			.map((i) => ({
+				...i,
+				name: i.name.trim(),
+				additions: i.additions
+					.filter((a) => a.text.trim() !== '')
+					.map((a) => ({ ...a, text: a.text.trim() }))
+			}))
 	);
 
 	const bill = $derived<Bill>({
@@ -96,6 +115,27 @@
 		});
 	}
 
+	function addAddition(item: OrderItem) {
+		item.additions.push(newAddition());
+		queueMicrotask(() => {
+			const rows = document.querySelectorAll<HTMLInputElement>(
+				`[data-addition-input="${item.id}"]`
+			);
+			rows[rows.length - 1]?.focus();
+		});
+	}
+
+	function removeAddition(item: OrderItem, additionId: string) {
+		item.additions = item.additions.filter((a) => a.id !== additionId);
+	}
+
+	function onAdditionKeydown(event: KeyboardEvent, item: OrderItem, index: number) {
+		if (event.key === 'Enter' && index === item.additions.length - 1) {
+			event.preventDefault();
+			addAddition(item);
+		}
+	}
+
 	function removeItem(id: string) {
 		items = items.filter((i) => i.id !== id);
 		if (items.length === 0) items = [newItem()];
@@ -124,7 +164,10 @@
 		shopName = saved.shopName;
 		customerName = saved.customerName;
 		mode = saved.mode;
-		items = saved.items.length > 0 ? saved.items.map((i) => ({ ...i })) : [newItem()];
+		items =
+			saved.items.length > 0
+				? saved.items.map((i) => ({ ...i, additions: i.additions.map((a) => ({ ...a })) }))
+				: [newItem()];
 		createdAt = saved.createdAt;
 		flash(`เปิดใบของ ${saved.customerName || 'ไม่ระบุชื่อ'} แล้ว`);
 	}
@@ -236,41 +279,77 @@
 
 				<ul class="mt-1.5 space-y-2">
 					{#each items as item, index (item.id)}
-						<li class="flex items-center gap-2 rounded-lg border border-line bg-white p-2">
-							<input
-								data-item-input
-								bind:value={item.name}
-								onkeydown={(e) => onItemKeydown(e, index)}
-								placeholder="เช่น ข้าวมันไก่"
-								maxlength="80"
-								aria-label="ชื่อรายการที่ {index + 1}"
-								class="min-w-0 flex-1 rounded-md border-0 bg-transparent px-2 py-2 text-base text-ink placeholder:text-muted/60 focus:ring-0"
-							/>
-							<div class="flex shrink-0 items-center rounded-md bg-field">
+						<li class="rounded-lg border border-line bg-white p-2">
+							<div class="flex items-center gap-2">
+								<input
+									data-item-input
+									bind:value={item.name}
+									onkeydown={(e) => onItemKeydown(e, index)}
+									placeholder="เช่น ข้าวมันไก่"
+									maxlength="80"
+									aria-label="ชื่อรายการที่ {index + 1}"
+									class="min-w-0 flex-1 rounded-md border-0 bg-transparent px-2 py-2 text-base text-ink placeholder:text-muted/60 focus:ring-0"
+								/>
+								<div class="flex shrink-0 items-center rounded-md bg-field">
+									<button
+										type="button"
+										aria-label="ลดจำนวน {item.name || `รายการที่ ${index + 1}`}"
+										onclick={() => setQty(item, item.qty - 1)}
+										class="h-9 w-9 rounded-l-md text-lg font-bold text-muted hover:bg-line/60 disabled:opacity-30"
+										disabled={item.qty <= 1}>−</button
+									>
+									<span class="w-8 text-center text-base font-bold text-ink tabular-nums"
+										>{item.qty}</span
+									>
+									<button
+										type="button"
+										aria-label="เพิ่มจำนวน {item.name || `รายการที่ ${index + 1}`}"
+										onclick={() => setQty(item, item.qty + 1)}
+										class="h-9 w-9 rounded-r-md text-lg font-bold text-muted hover:bg-line/60"
+										>+</button
+									>
+								</div>
 								<button
 									type="button"
-									aria-label="ลดจำนวน {item.name || `รายการที่ ${index + 1}`}"
-									onclick={() => setQty(item, item.qty - 1)}
-									class="h-9 w-9 rounded-l-md text-lg font-bold text-muted hover:bg-line/60 disabled:opacity-30"
-									disabled={item.qty <= 1}>−</button
-								>
-								<span class="w-8 text-center text-base font-bold text-ink tabular-nums"
-									>{item.qty}</span
-								>
-								<button
-									type="button"
-									aria-label="เพิ่มจำนวน {item.name || `รายการที่ ${index + 1}`}"
-									onclick={() => setQty(item, item.qty + 1)}
-									class="h-9 w-9 rounded-r-md text-lg font-bold text-muted hover:bg-line/60"
-									>+</button
+									aria-label="ลบรายการที่ {index + 1}"
+									onclick={() => removeItem(item.id)}
+									class="h-9 w-9 shrink-0 rounded-md text-muted hover:bg-chili-soft hover:text-chili"
+									>✕</button
 								>
 							</div>
+
+							{#if item.additions.length > 0}
+								<ul class="mt-1 space-y-1">
+									{#each item.additions as addition, additionIndex (addition.id)}
+										<li class="flex items-center gap-2">
+											<span aria-hidden="true" class="pl-3 text-muted">-</span>
+											<input
+												data-addition-input={item.id}
+												bind:value={addition.text}
+												onkeydown={(e) => onAdditionKeydown(e, item, additionIndex)}
+												placeholder="เช่น เพิ่มไข่ดาว"
+												maxlength="60"
+												aria-label="เพิ่มเติมบรรทัดที่ {additionIndex + 1} ของรายการที่ {index + 1}"
+												class="min-w-0 flex-1 rounded-md border-0 bg-transparent px-1 py-1.5 text-sm text-ink placeholder:text-muted/60 focus:ring-0"
+											/>
+											<button
+												type="button"
+												aria-label="ลบเพิ่มเติมบรรทัดที่ {additionIndex + 1} ของรายการที่ {index +
+													1}"
+												onclick={() => removeAddition(item, addition.id)}
+												class="h-7 w-7 shrink-0 rounded-md text-sm text-muted hover:bg-chili-soft hover:text-chili"
+												>✕</button
+											>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+
 							<button
 								type="button"
-								aria-label="ลบรายการที่ {index + 1}"
-								onclick={() => removeItem(item.id)}
-								class="h-9 w-9 shrink-0 rounded-md text-muted hover:bg-chili-soft hover:text-chili"
-								>✕</button
+								onclick={() => addAddition(item)}
+								class="mt-1 ml-1 rounded-md px-2 py-1 text-sm text-muted hover:text-chili"
+								>+ เพิ่มเติม</button
 							>
 						</li>
 					{/each}

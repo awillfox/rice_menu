@@ -1,4 +1,4 @@
-import type { Bill } from './types';
+import type { Addition, Bill, OrderItem } from './types';
 
 const HISTORY_KEY = 'rice-menu.history.v1';
 const SHOP_KEY = 'rice-menu.shop.v1';
@@ -23,17 +23,55 @@ function writeRaw(key: string, value: string): void {
 	}
 }
 
-function isBill(value: unknown): value is Bill {
-	if (typeof value !== 'object' || value === null) return false;
+/**
+ * Bills saved before additions existed have no `additions` field, and anything
+ * in localStorage may have been hand-edited. Normalise rather than trust, and
+ * drop only what cannot be repaired.
+ */
+function normalizeAdditions(value: unknown, itemId: string): Addition[] {
+	if (!Array.isArray(value)) return [];
+	return value.flatMap((entry, i) => {
+		if (typeof entry === 'object' && entry !== null) {
+			const a = entry as Record<string, unknown>;
+			if (typeof a.text === 'string' && a.text !== '') {
+				return [{ id: typeof a.id === 'string' ? a.id : `${itemId}-a${i}`, text: a.text }];
+			}
+		}
+		return [];
+	});
+}
+
+function normalizeItem(value: unknown, index: number): OrderItem | null {
+	if (typeof value !== 'object' || value === null) return null;
+	const o = value as Record<string, unknown>;
+	if (typeof o.name !== 'string') return null;
+	const id = typeof o.id === 'string' ? o.id : `restored-${index}`;
+	const qty =
+		typeof o.qty === 'number' && Number.isFinite(o.qty) ? Math.max(1, Math.round(o.qty)) : 1;
+	return { id, name: o.name, qty, additions: normalizeAdditions(o.additions, id) };
+}
+
+function normalizeBill(value: unknown): Bill | null {
+	if (typeof value !== 'object' || value === null) return null;
 	const b = value as Record<string, unknown>;
-	return (
-		typeof b.id === 'string' &&
-		typeof b.shopName === 'string' &&
-		typeof b.customerName === 'string' &&
-		(b.mode === 'dine-in' || b.mode === 'takeaway') &&
-		typeof b.createdAt === 'number' &&
-		Array.isArray(b.items)
-	);
+	if (
+		typeof b.id !== 'string' ||
+		typeof b.shopName !== 'string' ||
+		typeof b.customerName !== 'string' ||
+		(b.mode !== 'dine-in' && b.mode !== 'takeaway') ||
+		typeof b.createdAt !== 'number' ||
+		!Array.isArray(b.items)
+	) {
+		return null;
+	}
+	return {
+		id: b.id,
+		shopName: b.shopName,
+		customerName: b.customerName,
+		mode: b.mode,
+		createdAt: b.createdAt,
+		items: b.items.map(normalizeItem).filter((i): i is OrderItem => i !== null)
+	};
 }
 
 export function loadHistory(): Bill[] {
@@ -42,7 +80,7 @@ export function loadHistory(): Bill[] {
 	try {
 		const parsed: unknown = JSON.parse(raw);
 		if (!Array.isArray(parsed)) return [];
-		return parsed.filter(isBill);
+		return parsed.map(normalizeBill).filter((b): b is Bill => b !== null);
 	} catch {
 		return [];
 	}
