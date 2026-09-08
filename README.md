@@ -1,42 +1,63 @@
-# sv
+# ใบสั่งอาหาร — rice_menu
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+Web app for writing a food order slip and saving it as a JPG at exactly
+**100 × 150 mm (1181 × 1772 px, 300 DPI)**.
 
-## Creating a project
+A slip carries the shop name, the customer name, a `ทานที่ร้าน` / `กลับบ้าน`
+checkbox pair, and the ordered items with quantities. No prices — it is a
+kitchen ticket, not a receipt.
 
-If you're seeing this, you've probably already done this step. Congrats!
+Everything runs in the browser. There is no backend and no order data leaves
+the device; saved slips live in `localStorage`.
 
-```sh
-# create a new project
-npx sv create my-app
-```
-
-To recreate this project with the same configuration:
-
-```sh
-# recreate this project
-npx sv@0.17.0 create --template minimal --types ts --add prettier eslint tailwindcss="plugins:typography,forms" --install npm rice_menu
-```
-
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+## Running it
 
 ```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+npm install
+npm run dev        # http://localhost:5173
+npm run build      # static output in build/
+npm run preview    # serve the built output on :4173
 ```
 
-## Building
+## How the JPG is produced
 
-To create a production version of your app:
+The slip is drawn with the Canvas 2D API in `src/lib/bill/render.ts`, not by
+screenshotting DOM. The on-screen preview is that same canvas scaled down with
+CSS, so the preview and the exported file are one bitmap and cannot drift apart.
+
+Two consequences worth knowing:
+
+- **Sarabun is self-hosted** in `static/fonts/`. `fillText` renders with
+  whatever font is already resident and will not wait for a webfont, so Thai
+  would come out as tofu boxes on any machine without a Thai system font —
+  which includes most Linux servers and CI images. `ensureFontsReady()` must be
+  awaited before any render.
+- **The item list shrinks to fit.** Item text steps down through 46→26 px until
+  the list fits the paper. If it still does not fit, whole items are dropped
+  and the UI says how many, rather than silently truncating.
+
+## Verifying a change
+
+`npm run check` and `npm run lint` cover types and style. The slip itself is
+checked end to end against a real browser:
 
 ```sh
 npm run build
+npm run preview &          # must be restarted after every build
+node scripts/verify-slip.mjs
 ```
 
-You can preview the production build with `npm run preview`.
+It drives Chromium through a real order, exports the JPEG, and asserts the
+things that are easy to claim and hard to know: that Sarabun is actually
+resident, that the file is exactly 1181 × 1772 px (read from the JPEG's own SOF
+marker), that the paper is white rather than black, that history survives a
+reload, that overflow is reported, and that the layout does not scroll
+sideways at 390 px. Screenshots and the exported slip land in `verify-out/`.
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+It needs a Chromium binary; it looks in the Playwright cache by default, or set
+`CHROMIUM_PATH`.
+
+## Deployment
+
+Static site on Render, configured by `render.yaml`. `npm run build` emits to
+`build/`; nothing runs server-side.

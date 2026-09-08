@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: rice-menu
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./build
+    pullRequestPreviewsEnabled: false
+    headers:
+      - path: /fonts/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
